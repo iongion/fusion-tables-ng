@@ -1,15 +1,566 @@
 import * as React from "react";
 import { render } from "react-dom";
+import {
+  Alignment,
+  Button,
+  Classes,
+  Dialog,
+  InputGroup,
+  Menu,
+  MenuItem,
+  Navbar,
+  NavbarDivider,
+  NavbarGroup,
+  NavbarHeading,
+  Popover,
+  Position,
+  ButtonGroup,
+  MenuDivider,
+  Checkbox,
+  Intent
+} from "@blueprintjs/core";
+import { IconNames } from "@blueprintjs/icons";
+import uniq from "lodash/uniq";
+import sortBy from "lodash/sortBy";
+import isString from "lodash/isString";
+import isNumber from "lodash/isNumber";
+// project
+import Api from "./Api";
+// styles
+import "@blueprintjs/core/lib/css/blueprint.css";
+import "@blueprintjs/icons/lib/css/blueprint-icons.css";
+import "./App.css";
+// types
+enum VIEW_MODES {
+  LIST = "view.list",
+  GRID = "view.grid"
+}
+interface IAppDatabase {
+  documentId: string;
+  sheets: Array<any>;
+}
+interface IAppProps {}
+interface IAppState {
+  inputDocument: string;
+  viewMode: VIEW_MODES;
+  searchTerm: string;
+  database: IAppDatabase | null;
+}
+interface IViewMode {
+  type: VIEW_MODES;
+  label: string;
+  icon: any;
+}
+// locals
+const ViewModes: Array<IViewMode> = [
+  { type: VIEW_MODES.LIST, label: "List", icon: IconNames.LIST },
+  { type: VIEW_MODES.GRID, label: "Grid", icon: IconNames.GRID }
+];
 
-import "./styles.css";
+interface IDataViewProps {
+  mode: VIEW_MODES;
+  database: IAppDatabase | null;
+  search: string;
+}
+interface IDataViewState {
+  displayRecord: any;
+  filtersMap: any;
+  searchMap: any;
+  sortingMap: any;
+}
 
-function App() {
-  return (
-    <div className="App">
-      <h1>Hello CodeSandbox</h1>
-      <h2>Start editing to see some magic happen!</h2>
-    </div>
-  );
+const formatHeader = (header, value) => {
+  let output = value;
+  if (value && isString(value) && value.indexOf("http") === 0) {
+    output = (
+      <a href={value} rel="noopener noreferrer" target="_blank">
+        {value}
+      </a>
+    );
+  }
+  return output;
+};
+
+class AppDataView extends React.PureComponent<IDataViewProps, IDataViewState> {
+  constructor(props, context) {
+    super(props, context);
+    this.state = {
+      displayRecord: null,
+      filtersMap: {},
+      searchMap: {},
+      sortingMap: {}
+    };
+  }
+  getHeaderMenuOptions(header) {
+    let options = [];
+    if (this.props.database) {
+      const records = this.props.database.sheets[0].records;
+      const items = records
+        .map(record => record[header.name])
+        .map(it => {
+          if (header.type === "String") {
+            return `${it}`.trim();
+          }
+          return it;
+        });
+      let itemsList = [];
+      items.forEach(it => {
+        const values = it.split(";").map(it => it.trim());
+        itemsList = itemsList.concat(values);
+      });
+      itemsList = itemsList.filter(
+        it => it !== "NA" && it !== "N/A" && it !== "undefined" && it.length
+      );
+      itemsList = uniq(itemsList).sort();
+      options = itemsList;
+    }
+    return options;
+  }
+  onTableRowSelected = record => {
+    if (this.props.database) {
+      this.setState({
+        displayRecord: record
+      });
+    }
+  };
+  onDisplayRecordDialogClose = () => {
+    this.setState({
+      displayRecord: null
+    });
+  };
+  onHeaderSearchTermChanged = (e: any) => {
+    e.persist();
+    const header = e.target.getAttribute("data-header-name");
+    this.setState(prevState => {
+      const { searchMap } = prevState;
+      searchMap[header] = e.target.value;
+      return {
+        ...prevState,
+        searchMap: {
+          ...searchMap
+        }
+      };
+    });
+  };
+  getCurrentRecords() {
+    let headers = [];
+    let records = [];
+    if (this.props.database) {
+      headers = this.props.database.sheets[0].headers;
+      records = this.props.database.sheets[0].records.slice(0);
+    }
+    // Apply global search
+    records = records.filter(record => {
+      let isMatching = false;
+      if (this.props.search) {
+        // Check every column
+        for (let h = 0; h < headers.length; h++) {
+          const headerName = headers[h].name;
+          if (isString(record[headerName])) {
+            const haystack = record[headerName].toLowerCase();
+            const needle = this.props.search.toLowerCase();
+            const flag = haystack.indexOf(needle) !== -1;
+            if (flag) {
+              isMatching = true;
+              break;
+            }
+          }
+        }
+      } else {
+        isMatching = true;
+      }
+      return isMatching;
+    });
+    // Apply filters
+    const { filtersMap } = this.state;
+    Object.keys(filtersMap).forEach(headerName => {
+      const allowedValues = filtersMap[headerName];
+      if (allowedValues.length) {
+        records = records.filter(record => {
+          let isMatching = false;
+          for (let av = 0; av < allowedValues.length; av++) {
+            const needle = allowedValues[av];
+            const haystack = record[headerName];
+            isMatching = haystack.indexOf(needle) !== -1;
+            if (isMatching) {
+              break;
+            }
+          }
+          return isMatching;
+        });
+      }
+    });
+    // Apply sort
+    const { sortingMap } = this.state;
+    Object.keys(sortingMap).forEach(headerName => {
+      const sortDirection = sortingMap[headerName];
+      if (sortDirection === "asc") {
+        records = sortBy(records, [headerName]);
+      } else {
+        records = sortBy(records, [headerName]).reverse();
+      }
+    });
+    // Apply search by contents
+    const { searchMap } = this.state;
+    Object.keys(searchMap).forEach(headerName => {
+      const searchTerm = searchMap[headerName];
+      console.debug(searchTerm);
+      records = records.filter(record => {
+        const haystack = record[headerName].toLowerCase();
+        const needle = searchTerm.toLowerCase();
+        const flag = haystack.indexOf(needle) !== -1;
+        return flag;
+      });
+    });
+    return records;
+  }
+  renderList() {
+    console.debug(">> render list");
+    let headers = [];
+    let records = [];
+    if (this.props.database) {
+      headers = this.props.database.sheets[0].headers;
+    }
+    // Apply filters
+    const { filtersMap } = this.state;
+    records = this.getCurrentRecords();
+    return (
+      <table className="bp3-html-table bp3-html-table-bordered bp3-html-table-condensed bp3-html-table-striped bp3-small bp3-interactive AppDataViewTable">
+        <thead>
+          <tr>
+            <th style={{ width: "40px" }}>#</th>
+            {headers.map(header => {
+              const headerMenuOptions = this.getHeaderMenuOptions(header);
+              const onSort = mode => {
+                this.setState(
+                  prevState => {
+                    const { sortingMap } = prevState;
+                    if (sortingMap[header.name] === mode) {
+                      delete sortingMap[header.name];
+                    } else {
+                      sortingMap[header.name] = mode;
+                    }
+                    return {
+                      ...prevState,
+                      sortingMap: {
+                        ...sortingMap
+                      }
+                    };
+                  },
+                  () => {
+                    console.debug("Sorting applied", this.state.sortingMap);
+                  }
+                );
+              };
+              const isSortAsc = this.state.sortingMap[header.name] === "asc";
+              const isSortDesc = this.state.sortingMap[header.name] === "desc";
+              const searchTerm = this.state.searchMap[header.name] || "";
+              const headerMenu = (
+                <Menu>
+                  <MenuItem
+                    icon={IconNames.SORT_ASC}
+                    text="A to Z"
+                    onClick={() => onSort("asc")}
+                    active={isSortAsc}
+                    title="Sort ascending"
+                  />
+                  <MenuItem
+                    icon={IconNames.SORT_DESC}
+                    text="Z to A"
+                    onClick={() => onSort("desc")}
+                    active={isSortDesc}
+                    title="Sort descending"
+                  />
+                  <MenuDivider />
+                  <InputGroup
+                    leftIcon={IconNames.FILTER}
+                    placeholder="Type to begin filtering"
+                    dir="auto"
+                    type="text"
+                    autoComplete="off"
+                    value={searchTerm}
+                    data-header-name={header.name}
+                    onChange={this.onHeaderSearchTermChanged}
+                  />
+                  <MenuDivider />
+                  <div className="AppDataViewTableHeaderFilterCheckboxes">
+                    {headerMenuOptions.map(option => {
+                      let isFiltered = false;
+                      if (
+                        filtersMap[header.name] &&
+                        filtersMap[header.name].indexOf(option) !== -1
+                      ) {
+                        isFiltered = true;
+                      }
+                      const onCheckBoxClick = e => {
+                        const isApplied = e.currentTarget.checked;
+                        this.setState(
+                          prevState => {
+                            const { filtersMap } = prevState;
+                            if (isApplied) {
+                              if (!filtersMap[header.name]) {
+                                filtersMap[header.name] = [];
+                              }
+                              filtersMap[header.name].push(option);
+                            } else {
+                              if (filtersMap[header.name]) {
+                                filtersMap[header.name] = filtersMap[
+                                  header.name
+                                ].filter(it => it !== option);
+                              }
+                            }
+                            return {
+                              ...prevState,
+                              filtersMap: {
+                                ...filtersMap
+                              }
+                            };
+                          },
+                          () => {
+                            console.debug("Filters updated");
+                          }
+                        );
+                      };
+                      return (
+                        <Checkbox
+                          key={option}
+                          label={option}
+                          className="AppDataViewTableHeaderFilterCheckbox"
+                          onChange={onCheckBoxClick}
+                          checked={isFiltered}
+                        />
+                      );
+                    })}
+                  </div>
+                </Menu>
+              );
+              const headerWidget = (
+                <div className="AppDataViewTableHeader">
+                  <span
+                    className="AppDataViewTableHeaderLabel"
+                    title={header.name}
+                  >
+                    {header.name}
+                  </span>
+                  <Popover content={headerMenu} position={Position.BOTTOM}>
+                    <Button small minimal icon={IconNames.CARET_DOWN} />
+                  </Popover>
+                </div>
+              );
+              return <th key={header.name}>{headerWidget}</th>;
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          {records.map((record, index) => {
+            return (
+              <tr key={index} onClick={() => this.onTableRowSelected(record)}>
+                <td>{index + 1}</td>
+                {headers.map(header => (
+                  <td key={header.name}>{record[header.name]}</td>
+                ))}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    );
+  }
+  renderGrid() {
+    console.debug(">> render grid");
+    let headers = [];
+    let records = [];
+    if (this.props.database) {
+      headers = this.props.database.sheets[0].headers;
+    }
+    records = this.getCurrentRecords();
+    return (
+      <div className="AppDataViewGrid">
+        <div className="AppDataViewGridContainer">
+          {records.map((record, index) => (
+            <div
+              key={index}
+              className="AppDataViewGridContainerItem"
+              data-record-index={index}
+            >
+              <ul className={Classes.LIST}>
+                {headers.map((header, index) => (
+                  <li key={index}>
+                    <strong>{header.name}</strong>
+                    <span>{record[header.name]}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="AppDataViewGridContainerItemFade">
+                <Button
+                  small
+                  className="AppDataViewGridContainerItemMoreButton"
+                  type="button"
+                  text="Details"
+                  data-record-index={index}
+                  onClick={() => this.onTableRowSelected(record)}
+                  icon={IconNames.LIST_DETAIL_VIEW}
+                  intent={Intent.PRIMARY}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  render() {
+    const { displayRecord } = this.state;
+    let view = null;
+    switch (this.props.mode) {
+      case VIEW_MODES.LIST:
+        view = this.renderList();
+        break;
+      case VIEW_MODES.GRID:
+        view = this.renderGrid();
+        break;
+      default:
+        break;
+    }
+    let dialog = null;
+    if (displayRecord) {
+      let headers = [];
+      if (this.props.database) {
+        headers = this.props.database.sheets[0].headers;
+      }
+      dialog = (
+        <Dialog
+          isOpen
+          icon={IconNames.INFO_SIGN}
+          title={displayRecord.Name}
+          onClose={this.onDisplayRecordDialogClose}
+          className="AppDataViewRecordDialog"
+        >
+          <div className={Classes.DIALOG_BODY}>
+            <table className="bp3-html-table bp3-html-table-bordered bp3-html-table-condensed bp3-html-table-striped bp3-small bp3-interactive AppDataViewRecordTable">
+              <tbody>
+                {headers.map((header, index) => (
+                  <tr key={index}>
+                    <td>
+                      <strong>{header.name}</strong>
+                    </td>
+                    <td>{formatHeader(header, displayRecord[header.name])}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Dialog>
+      );
+    }
+    return (
+      <div className="AppDataView">
+        {view}
+        {dialog}
+      </div>
+    );
+  }
+}
+
+class App extends React.PureComponent<IAppProps, IAppState> {
+  private api: Api = new Api();
+  constructor(props, context) {
+    super(props, context);
+    this.state = {
+      inputDocument: "1f-FvO_vnyD6X78gtdSRn4v-U3WwjnePJ9FXdY4gLQ3Q",
+      viewMode: VIEW_MODES.LIST,
+      searchTerm: "",
+      database: null
+    };
+  }
+  componentDidMount() {
+    this.api.fetchDocument(this.state.inputDocument).then(database => {
+      this.setState(
+        prevState => ({
+          ...prevState,
+          database: database as IAppDatabase
+        }),
+        () => {
+          console.debug(">> Database is here", database);
+        }
+      );
+    });
+  }
+  onViewModeClick = e => {
+    const viewMode = e.currentTarget.getAttribute("data-view-mode");
+    this.setState({
+      viewMode
+    });
+  };
+  onGlobalSearchTermChange = e => {
+    this.setState({
+      searchTerm: e.target.value
+    });
+  };
+  render() {
+    const { database, inputDocument, searchTerm, viewMode } = this.state;
+    const searchButtons = (
+      <ButtonGroup>
+        <Button icon={IconNames.DOWNLOAD} />
+        <Button icon={IconNames.SOCIAL_MEDIA} />
+      </ButtonGroup>
+    );
+    return (
+      <div className="App">
+        <div className="AppHeader">
+          <Navbar className="AppNavbar">
+            <NavbarGroup className="AppInputDocumentGroup">
+              <NavbarHeading>Document</NavbarHeading>
+              <InputGroup
+                leftIcon={IconNames.DOCUMENT}
+                placeholder="Type the shared link"
+                dir="auto"
+                type="text"
+                autoComplete="off"
+                rightElement={searchButtons}
+                value={inputDocument}
+                fill
+              />
+            </NavbarGroup>
+            <NavbarGroup align={Alignment.RIGHT}>
+              <NavbarHeading>View</NavbarHeading>
+              <ButtonGroup>
+                {ViewModes.map(mode => (
+                  <Button
+                    key={mode.type}
+                    className={Classes.MINIMAL}
+                    active={viewMode === mode.type}
+                    icon={mode.icon}
+                    text={mode.label}
+                    data-view-mode={mode.type}
+                    onClick={this.onViewModeClick}
+                  />
+                ))}
+              </ButtonGroup>
+              <NavbarDivider />
+              <NavbarHeading>Search</NavbarHeading>
+              <InputGroup
+                leftIcon={IconNames.SEARCH}
+                placeholder="Type to begin search"
+                dir="auto"
+                type="search"
+                autoComplete="off"
+                value={searchTerm}
+                onChange={this.onGlobalSearchTermChange}
+              />
+            </NavbarGroup>
+          </Navbar>
+        </div>
+        <div className="AppContent">
+          <AppDataView
+            mode={viewMode}
+            database={database}
+            search={searchTerm}
+          />
+        </div>
+      </div>
+    );
+  }
 }
 
 const rootElement = document.getElementById("root");
