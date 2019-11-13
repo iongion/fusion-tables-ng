@@ -1,28 +1,28 @@
 import axios from "axios";
 import * as XLSX from "xlsx";
 // locals
-const columnTypeDecodesMap = {
-  b: input => ({ type: "Boolean", value: !!input }),
-  n: input => {
+const columnTypeDecodesMap: any = {
+  b: (input: any) => ({ type: "Boolean", value: !!input }),
+  n: (input: any) => {
     let output = Number(input);
     if (Number.isNaN(output)) {
       output = 0;
     }
     return { type: "Number", value: output };
   },
-  e: input => ({ type: "Error", value: new Error(input) }),
-  s: input => ({ type: "String", value: `${input || ""}` }),
-  d: input => ({ type: "Date", value: new Date(input) })
+  e: (input: any) => ({ type: "Error", value: new Error(input) }),
+  s: (input: any) => ({ type: "String", value: `${input || ""}` }),
+  d: (input: any) => ({ type: "Date", value: new Date(input) })
 };
-const columnTypeDecode = columnData => {
-  let decoded = columnData.v;
+const columnTypeDecode = (columnData: any) => {
+  let decoded: any = columnData.v;
   if (typeof columnTypeDecodesMap[columnData.t] !== "undefined") {
     decoded = columnTypeDecodesMap[columnData.t](columnData.v);
   }
   return decoded;
 };
-const extractHeaders = ws => {
-  const header = [];
+const extractHeaders = (ws: any) => {
+  const header: Array<any> = [];
   const columnCount = XLSX.utils.decode_range(ws["!ref"]).e.c + 1;
   for (let i = 0; i < columnCount; ++i) {
     const columnIndex = `${XLSX.utils.encode_col(i)}1`;
@@ -40,7 +40,7 @@ const extractHeaders = ws => {
 
 export default class Api {
   static GATEWAY = `//us-central1-plasma-card-258813.cloudfunctions.net`;
-  fetchDocument(documentId) {
+  fetchDocument(documentId: string) {
     let apiUrl = `${Api.GATEWAY}/proxy-sheet?id=${encodeURIComponent(
       documentId
     )}`;
