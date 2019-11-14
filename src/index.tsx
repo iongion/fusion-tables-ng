@@ -5,6 +5,7 @@ import {
   Button,
   Classes,
   Dialog,
+  Icon,
   InputGroup,
   Menu,
   MenuItem,
@@ -22,14 +23,118 @@ import {
 import { IconNames } from "@blueprintjs/icons";
 import uniq from "lodash/uniq";
 import sortBy from "lodash/sortBy";
+import isEmpty from "lodash/isEmpty";
 import isString from "lodash/isString";
 import isNumber from "lodash/isNumber";
+import Clipboard from "clipboard";
+import numeral from "numeral";
+import { getCode, getName } from "country-list";
+import ReactCountryFlag from "react-country-flag";
 // project
 import Api from "./Api";
+import BlockUI from "./BlockUI";
+import Toaster from "./Toaster";
 // styles
 import "@blueprintjs/core/lib/css/blueprint.css";
 import "@blueprintjs/icons/lib/css/blueprint-icons.css";
 import "./App.css";
+//
+const isNumeric = (value: any) => {
+  return isNumber(value) || (!isEmpty(value) && !isNaN(value));
+};
+const formatCountry = input => {
+  const countryCode = getCode(input) || getCode(input.replace(/The\s/gim, ""));
+  if (!countryCode) {
+    console.warn("Cannot match country", input);
+    return input;
+  }
+  return (
+    <div>
+      <ReactCountryFlag code={countryCode.toLowerCase()} svg />
+      &nbsp;
+      <strong>{input}</strong>
+    </div>
+  );
+};
+const formatHeader = (header: any, value: any) => {
+  let output = value;
+  if (value !== null && typeof value !== "undefined") {
+    if (isString(value)) {
+      output = value.trim();
+      const lValue = output.toLowerCase();
+      if (lValue === "na" || lValue === "n/a" || lValue === "") {
+        output = (
+          <Icon
+            icon={IconNames.SMALL_CROSS}
+            iconSize={Icon.SIZE_STANDARD}
+            title="Not available"
+          />
+        );
+      } else if (lValue.indexOf("http") === 0) {
+        output = (
+          <a href={output} rel="noopener noreferrer" target="_blank">
+            {output}
+          </a>
+        );
+      } else {
+        // Fuzzy matching
+        const listItems = output
+          .split(";")
+          .map(it => it.trim())
+          .filter(it => !!it);
+        if (listItems.length === 1) {
+          if (header.name === "Country") {
+            output = formatCountry(output);
+          }
+        } else if (listItems.length > 1) {
+          output = (
+            <ul
+              className="AppDataViewRecordTableColumnListValue"
+              data-header={header.name}
+            >
+              {listItems.map((it, idx) => {
+                let out = it;
+                if (header.name === "Country") {
+                  out = formatCountry(out);
+                }
+                return <li key={idx}>{out}</li>;
+              })}
+            </ul>
+          );
+        }
+      }
+    } else if (isNumber(value)) {
+      output = numeral(value).format("0,0[.]00");
+    }
+  } else {
+    output = (
+      <Icon
+        icon={IconNames.SMALL_CROSS}
+        iconSize={Icon.SIZE_STANDARD}
+        title="Not available"
+        intent={Intent.DANGER}
+      />
+    );
+  }
+  return output;
+};
+const decodeDocumentIdFromUrl = (url: string) => {
+  // https://docs.google.com/spreadsheets/d/DOCUMENT_ID/edit
+  const input = url.split("/");
+  return input[5];
+};
+const decodeDocumentId = (input?: string) => {
+  const inputQuery = decodeURIComponent(
+    input || window.location.search.substring(1)
+  );
+  let documentId = "";
+  if (inputQuery.indexOf("http") === 0) {
+    documentId = decodeDocumentIdFromUrl(inputQuery);
+  } else {
+    documentId = inputQuery.split("&")[0]; // split to eliminate other urls change
+  }
+  return documentId;
+};
 // types
 enum VIEW_MODES {
   LIST = "view.list",
@@ -41,6 +146,7 @@ interface IAppDatabase {
 }
 interface IAppProps {}
 interface IAppState {
+  isBlocked: boolean;
   inputDocument: string;
   viewMode: VIEW_MODES;
   searchTerm: string;
@@ -69,20 +175,8 @@ interface IDataViewState {
   sortingMap: any;
 }
 
-const formatHeader = (header, value) => {
-  let output = value;
-  if (value && isString(value) && value.indexOf("http") === 0) {
-    output = (
-      <a href={value} rel="noopener noreferrer" target="_blank">
-        {value}
-      </a>
-    );
-  }
-  return output;
-};
-
 class AppDataView extends React.PureComponent<IDataViewProps, IDataViewState> {
-  constructor(props, context) {
+  constructor(props: IDataViewProps, context: any) {
     super(props, context);
     this.state = {
       displayRecord: null,
@@ -109,7 +203,8 @@ class AppDataView extends React.PureComponent<IDataViewProps, IDataViewState> {
         itemsList = itemsList.concat(values);
       });
       itemsList = itemsList.filter(
-        it => it !== "NA" && it !== "N/A" && it !== "undefined" && it.length
+        (it: any) =>
+          it !== "NA" && it !== "N/A" && it !== "undefined" && it.length
       );
       itemsList = uniq(itemsList).sort();
       options = itemsList;
@@ -143,8 +238,8 @@ class AppDataView extends React.PureComponent<IDataViewProps, IDataViewState> {
     });
   };
   getCurrentRecords() {
-    let headers = [];
-    let records = [];
+    let headers: Array<any> = [];
+    let records: Array<any> = [];
     if (this.props.database) {
       headers = this.props.database.sheets[0].headers;
       records = this.props.database.sheets[0].records.slice(0);
@@ -180,8 +275,12 @@ class AppDataView extends React.PureComponent<IDataViewProps, IDataViewState> {
           let isMatching = false;
           for (let av = 0; av < allowedValues.length; av++) {
             const needle = allowedValues[av];
-            const haystack = record[headerName];
-            isMatching = haystack.indexOf(needle) !== -1;
+            const haystack = record[headerName] || "";
+            if (isNumber(haystack)) {
+              isMatching = `${needle}` === `${haystack}`;
+            } else {
+              isMatching = haystack.indexOf(needle) !== -1;
+            }
             if (isMatching) {
               break;
             }
@@ -204,7 +303,6 @@ class AppDataView extends React.PureComponent<IDataViewProps, IDataViewState> {
     const { searchMap } = this.state;
     Object.keys(searchMap).forEach(headerName => {
       const searchTerm = searchMap[headerName];
-      console.debug(searchTerm);
       records = records.filter(record => {
         const haystack = record[headerName].toLowerCase();
         const needle = searchTerm.toLowerCase();
@@ -215,9 +313,8 @@ class AppDataView extends React.PureComponent<IDataViewProps, IDataViewState> {
     return records;
   }
   renderList() {
-    console.debug(">> render list");
-    let headers = [];
-    let records = [];
+    let headers: Array<any> = [];
+    let records: Array<any> = [];
     if (this.props.database) {
       headers = this.props.database.sheets[0].headers;
     }
@@ -276,7 +373,7 @@ class AppDataView extends React.PureComponent<IDataViewProps, IDataViewState> {
                     leftIcon={IconNames.FILTER}
                     placeholder="Type to begin filtering"
                     dir="auto"
-                    type="text"
+                    type="search"
                     autoComplete="off"
                     value={searchTerm}
                     data-header-name={header.name}
@@ -347,7 +444,11 @@ class AppDataView extends React.PureComponent<IDataViewProps, IDataViewState> {
                   </Popover>
                 </div>
               );
-              return <th key={header.name}>{headerWidget}</th>;
+              return (
+                <th key={header.name} data-header={header.name}>
+                  {headerWidget}
+                </th>
+              );
             })}
           </tr>
         </thead>
@@ -357,7 +458,9 @@ class AppDataView extends React.PureComponent<IDataViewProps, IDataViewState> {
               <tr key={index} onClick={() => this.onTableRowSelected(record)}>
                 <td>{index + 1}</td>
                 {headers.map(header => (
-                  <td key={header.name}>{record[header.name]}</td>
+                  <td key={header.name}>
+                    {formatHeader(header, record[header.name])}
+                  </td>
                 ))}
               </tr>
             );
@@ -367,9 +470,8 @@ class AppDataView extends React.PureComponent<IDataViewProps, IDataViewState> {
     );
   }
   renderGrid() {
-    console.debug(">> render grid");
-    let headers = [];
-    let records = [];
+    let headers: Array<any> = [];
+    let records: Array<any> = [];
     if (this.props.database) {
       headers = this.props.database.sheets[0].headers;
     }
@@ -410,8 +512,8 @@ class AppDataView extends React.PureComponent<IDataViewProps, IDataViewState> {
     );
   }
   render() {
-    const { displayRecord } = this.state;
-    let view = null;
+    const record = this.state.displayRecord;
+    let view: any = null;
     switch (this.props.mode) {
       case VIEW_MODES.LIST:
         view = this.renderList();
@@ -422,9 +524,9 @@ class AppDataView extends React.PureComponent<IDataViewProps, IDataViewState> {
       default:
         break;
     }
-    let dialog = null;
-    if (displayRecord) {
-      let headers = [];
+    let dialog: any = null;
+    if (record) {
+      let headers: Array<any> = [];
       if (this.props.database) {
         headers = this.props.database.sheets[0].headers;
       }
@@ -432,7 +534,7 @@ class AppDataView extends React.PureComponent<IDataViewProps, IDataViewState> {
         <Dialog
           isOpen
           icon={IconNames.INFO_SIGN}
-          title={displayRecord.Name}
+          title={record.Name}
           onClose={this.onDisplayRecordDialogClose}
           className="AppDataViewRecordDialog"
         >
@@ -444,7 +546,7 @@ class AppDataView extends React.PureComponent<IDataViewProps, IDataViewState> {
                     <td>
                       <strong>{header.name}</strong>
                     </td>
-                    <td>{formatHeader(header, displayRecord[header.name])}</td>
+                    <td>{formatHeader(header, record[header.name])}</td>
                   </tr>
                 ))}
               </tbody>
@@ -464,26 +566,59 @@ class AppDataView extends React.PureComponent<IDataViewProps, IDataViewState> {
 
 class App extends React.PureComponent<IAppProps, IAppState> {
   private api: Api = new Api();
+  private clipboard: Clipboard | null = null;
   constructor(props, context) {
     super(props, context);
     this.state = {
-      inputDocument: "1f-FvO_vnyD6X78gtdSRn4v-U3WwjnePJ9FXdY4gLQ3Q",
+      isBlocked: false,
+      inputDocument: window.localStorage.getItem("document.id") || "",
       viewMode: VIEW_MODES.LIST,
       searchTerm: "",
       database: null
     };
   }
   componentDidMount() {
-    this.api.fetchDocument(this.state.inputDocument).then(database => {
+    this.clipboard = new Clipboard(".AppHeaderButtonShareUrl");
+    this.clipboard.on("success", () => {
+      Toaster.notify("Sharing url has been copied to your clipboard");
+    });
+    this.clipboard.on("error", e => {
+      console.error("Unable to copy shared url to clipboard");
+    });
+    const id = decodeDocumentId(); // from query
+    if (id) {
       this.setState(
-        prevState => ({
-          ...prevState,
-          database: database as IAppDatabase
-        }),
+        {
+          inputDocument: id
+        },
         () => {
-          console.debug(">> Database is here", database);
+          this.loadDocument();
         }
       );
+    } else {
+      this.loadDocument();
+    }
+  }
+  loadDocument() {
+    const id = this.state.inputDocument;
+    if (!id) {
+      console.debug("No document was specified");
+      return;
+    }
+    this.setState({ isBlocked: true }, () => {
+      // 1f-FvO_vnyD6X78gtdSRn4v-U3WwjnePJ9FXdY4gLQ3Q
+      this.api.fetchDocument(id).then(database => {
+        this.setState(
+          prevState => ({
+            ...prevState,
+            database: database as IAppDatabase,
+            isBlocked: false
+          }),
+          () => {
+            console.debug(">> Database is here", database);
+          }
+        );
+      });
     });
   }
   onViewModeClick = e => {
@@ -497,16 +632,48 @@ class App extends React.PureComponent<IAppProps, IAppState> {
       searchTerm: e.target.value
     });
   };
+  onDocumentFetchClick = () => {
+    this.loadDocument();
+  };
+  onInputDocumentChange = e => {
+    this.setState(
+      {
+        inputDocument: e.target.value
+      },
+      () => {
+        window.localStorage.setItem("document.id", this.state.inputDocument);
+      }
+    );
+  };
   render() {
-    const { database, inputDocument, searchTerm, viewMode } = this.state;
+    const {
+      isBlocked,
+      database,
+      inputDocument,
+      searchTerm,
+      viewMode
+    } = this.state;
+    let shareUrl = "";
+    if (database) {
+      shareUrl = `${window.location.origin}${
+        window.location.pathname
+      }?${encodeURIComponent(database.documentId)}`;
+    }
     const searchButtons = (
       <ButtonGroup>
-        <Button icon={IconNames.DOWNLOAD} />
-        <Button icon={IconNames.SOCIAL_MEDIA} />
+        <Button icon={IconNames.DOWNLOAD} onClick={this.onDocumentFetchClick} />
+        <Button
+          className="AppHeaderButtonShareUrl"
+          icon={IconNames.SOCIAL_MEDIA}
+          data-clipboard-text={shareUrl}
+        />
       </ButtonGroup>
     );
+    const content = database ? (
+      <AppDataView mode={viewMode} database={database} search={searchTerm} />
+    ) : null;
     return (
-      <div className="App">
+      <BlockUI blocking={isBlocked} className="App">
         <div className="AppHeader">
           <Navbar className="AppNavbar">
             <NavbarGroup className="AppInputDocumentGroup">
@@ -519,6 +686,7 @@ class App extends React.PureComponent<IAppProps, IAppState> {
                 autoComplete="off"
                 rightElement={searchButtons}
                 value={inputDocument}
+                onChange={this.onInputDocumentChange}
                 fill
               />
             </NavbarGroup>
@@ -551,14 +719,8 @@ class App extends React.PureComponent<IAppProps, IAppState> {
             </NavbarGroup>
           </Navbar>
         </div>
-        <div className="AppContent">
-          <AppDataView
-            mode={viewMode}
-            database={database}
-            search={searchTerm}
-          />
-        </div>
-      </div>
+        <div className="AppContent">{content}</div>
+      </BlockUI>
     );
   }
 }

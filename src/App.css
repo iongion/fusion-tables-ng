@@ -24,7 +24,6 @@ body {
   margin-right: 20px;
 }
 .AppContent {
-  background: #eee;
   display: flex;
   flex: 1;
   height: 100%;
@@ -34,7 +33,7 @@ body {
   width: 100%;
 }
 .AppDataViewTable {
-  font-size: 12px;
+  font-size: 12px !important;
   width: 100%;
   max-width: 100%;
   table-layout: fixed;
@@ -103,6 +102,20 @@ body {
 .AppDataViewRecordTable {
   font-size: 12px !important;
 }
+.AppDataViewRecordTableColumnListValue {
+  padding-left: 14px;
+  margin: 0;
+}
+.AppDataViewRecordTableColumnListValue[data-header="Country"] {
+  list-style-type: none;
+  padding: 0;
+}
+.AppDataViewRecordTableColumnListValue[data-header="Country"] li {
+  padding-bottom: 5px;
+}
+.AppDataViewRecordTable tr td:first-child {
+  min-width: 140px;
+}
 .AppDataViewGridContainer {
   font-size: 12px;
   display: grid;
@@ -145,4 +158,10 @@ body {
   margin: 0;
   padding: 4px;
   padding-top: 2px;
+}
+thead tr th[data-header="Country"] {
+  width: 140px;
+}
+thead tr th[data-header="Period"] {
+  width: 80px;
 }
